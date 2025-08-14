@@ -1,0 +1,112 @@
+# Isaac Lab DirectX Fork - .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Isaac Sim / Omniverse
+.omniverse/
+*.usd
+*.usda
+*.usdc
+*.mdl
+*.dds
+kit_config/
+logs/rsl_rl/*/
+!logs/rsl_rl/.gitkeep
+
+# Training outputs (but keep structure)
+logs/rsl_rl/*/
+!logs/rsl_rl/README.md
+
+# TensorBoard
+runs/
+tensorboard_logs/
+
+# System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.sublime-*
+
+# Environment variables
+.env
+.env.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# NVIDIA/CUDA
+*.ptx
+*.cubin
+
+# DirectX
+*.dxr
+*.hlsl.cached
+
+# Documentation build
+docs/_build/
+docs/build/
+site/
+
+# Virtual environments  
+venv/
+env/
+ENV/
+
+# Conda
+.conda/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Keep essential DirectX files
+!apps/isaacsim_4_5/isaaclab.python.directx.kit
+!isaac_sim_config.json
+
+# Keep documentation
+!docs/VULKAN_DIRECTX_TROUBLESHOOTING.md
+!README_RU.md
+!README_FORK.md
+!QUICK_START_DIRECTX.md
+!COMMANDS_REFERENCE.md
