@@ -1,0 +1,15 @@
+{
+  "renderer": {
+    "graphicsAPI": "dx12",
+    "preferDirectX": true,
+    "disableVulkan": true
+  },
+  "display": {
+    "enableHeadless": false,
+    "forceDirectXMode": true
+  },
+  "vulkan": {
+    "disabled": true,
+    "fallbackToDirectX": true
+  }
+}
