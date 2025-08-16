@@ -116,6 +116,18 @@ For detailed Isaac Sim installation instructions, please refer to
     isaaclab.bat -p scripts\reinforcement_learning\skrl\train.py --task Isaac-Ant-v0 --headless
     ```
 
+### Windows DX12 Training Launcher (Recommended)
+
+On Windows, you can use a dedicated PowerShell launcher that enforces DirectX 12 (disables Vulkan) and provides convenient profiles, resume-in-place logging, video recording, and an optional interactive timer.
+
+- Script: `scripts/reinforcement_learning/rsl_rl/run_training.ps1`
+- Docs: `docs/run_rules.md`
+- Quick start (PowerShell):
+  - Resume high-load run (headless):
+    - `powershell -ExecutionPolicy Bypass -File scripts/reinforcement_learning/rsl_rl/run_training.ps1 -Profile HighLoad -Resume -RunPath "<path-to-run>"`
+  - 6-hour limit:
+    - `...\run_training.ps1 -UseTimer -MaxHours 6`
+
 ### Documentation
 
 Our [documentation page](https://isaac-sim.github.io/IsaacLab) provides everything you need to get started, including detailed tutorials and step-by-step guides. Follow these links to learn more about:
