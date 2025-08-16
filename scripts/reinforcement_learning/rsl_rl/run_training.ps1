@@ -14,7 +14,13 @@ param(
   [switch]$UseTimer = $false,
   # Conda prompt integration
   [string]$CondaEnv = "env_isaaclab",
-  [switch]$OpenCondaPrompt = $false
+  [switch]$OpenCondaPrompt = $false,
+  # Auto-sizing VRAM load
+  [switch]$AutoNumEnvs = $false,
+  [int]$TargetVramGB = 16,
+  [int]$ProbeNumEnvs = 512,
+  [int]$ProbeWaitSec = 25,
+  [int]$SafetyMB = 1024
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,12 +76,55 @@ $env:OMNI_KIT_DISABLE_VULKAN = "1"
 # Hard-disable Vulkan plugin loading (prevents carb.graphics-vulkan.plugin from being loaded at all)
 $env:CARB_DISABLE_MODULES = "carb.graphics-vulkan.plugin"
 
+# Auto-calculate NumEnvs to reach target VRAM if requested
+if ($AutoNumEnvs) {
+	function Get-GpuMemMB {
+		try {
+			$v = & nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null
+			if (-not $v) { return $null }
+			$first = ($v -split "\r?\n")[0].Trim()
+			return [int]$first
+		}
+		catch { return $null }
+	}
+
+	$baseMB = Get-GpuMemMB
+	if ($null -eq $baseMB) {
+		Write-Warning "nvidia-smi not found or unavailable. AutoNumEnvs disabled."
+	}
+	else {
+		# Build a short probe run to estimate per-env memory usage
+		$probeArgs = @(
+			"-p", $trainPy,
+			"--task", $Task,
+			"--num_envs", $ProbeNumEnvs.ToString(),
+			"--max_iterations", "1",
+			"--headless",
+			"--seed", $Seed.ToString(),
+			"--experience", $experience
+		)
+		# Do not resume for probe to avoid writing into existing run
+		$proc = Start-Process -FilePath $bat -WorkingDirectory $workspace -ArgumentList $probeArgs -PassThru
+		Start-Sleep -Seconds $ProbeWaitSec
+		$peakMB = Get-GpuMemMB
+		if ($null -eq $peakMB) { $peakMB = $baseMB }
+		$perEnvMB = [math]::Max([math]::Round( ($peakMB - $baseMB) / [double][math]::Max($ProbeNumEnvs,1) ), 1)
+		try { if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } } catch { }
+
+		$targetMB = $TargetVramGB * 1024
+		$calc = [math]::Floor( ($targetMB - $baseMB - $SafetyMB) / [double][math]::Max($perEnvMB,1) )
+		if ($calc -lt 1) { $calc = 1 }
+		$NumEnvs = [int]$calc
+		Write-Host "AutoNumEnvs -> base=${baseMB}MB, peak=${peakMB}MB, perEnv≈${perEnvMB}MB, target=${targetMB}MB => NumEnvs=$NumEnvs" -ForegroundColor Yellow
+	}
+}
+
 # Ensure Python sees local packages (when not using Conda)
 if ($env:PYTHONPATH) {
-  $env:PYTHONPATH = "$workspace\source;$env:PYTHONPATH"
+	$env:PYTHONPATH = "$workspace\source;$env:PYTHONPATH"
 }
 else {
-  $env:PYTHONPATH = "$workspace\source"
+	$env:PYTHONPATH = "$workspace\source"
 }
 
 Write-Host "Workspace:" $workspace
@@ -92,14 +141,14 @@ if ($Resume) {
 
 # Build argument list for train.py
 $argsList = @(
-  "-p",
-  $trainPy,
-  "--task", $Task,
-  "--num_envs", $NumEnvs.ToString(),
-  "--max_iterations", $MaxIterations.ToString(),
-  "--headless",
-  "--seed", $Seed.ToString(),
-  "--experience", $experience
+	"-p",
+	$trainPy,
+	"--task", $Task,
+	"--num_envs", $NumEnvs.ToString(),
+	"--max_iterations", $MaxIterations.ToString(),
+	"--headless",
+	"--seed", $Seed.ToString(),
+	"--experience", $experience
 )
 
 if ($Video) {
