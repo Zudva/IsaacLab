@@ -4,7 +4,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem ===== User config =====
 set "CONDA_ENV=env_isaaclab"
 set "TASK=Isaac-Velocity-Flat-G1-v0"
-set "NUM_ENVS=1280"
+set "NUM_ENVS=896"
 set "MAX_ITERS=20000"
 set "SEED=42"
 set "RUN_PATH=C:\Users\zudva\Downloads\IsaacLab\logs\rsl_rl\g1_flat\2025-08-14_15-28-32"
@@ -13,10 +13,15 @@ set "VIDEO_INTERVAL=5000"
 set "VIDEO_LENGTH=300"
 rem Auto-size NumEnvs to saturate VRAM (1=on, 0=off)
 set "AUTO_NUM_ENVS=1"
-set "TARGET_VRAM_GB=16"
+set "TARGET_VRAM_GB=14"
 set "PROBE_NUM_ENVS=512"
 set "PROBE_WAIT_SEC=45"
-set "SAFETY_MB=1024"
+set "SAFETY_MB=2048"
+rem Stability options
+set "KILL_OLD_PROCS=1"
+set "ALLOW_CHANGE_NUM_ENVS_ON_ERROR=0"
+set "MIN_NUM_ENVS=768"
+set "DECR_STEP=64"
 rem ========================
 
 rem Resolve workspace (folder of this script)
@@ -24,11 +29,21 @@ set "WORKSPACE=%~dp0"
 for %%A in ("%WORKSPACE%.") do set "WORKSPACE=%%~fA"
 pushd "%WORKSPACE%" >nul 2>&1
 
+rem Early log creation so file always exists
+set "LOG_DIR=%WORKSPACE%\logs"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>&1
+set "LOG_FILE=%LOG_DIR%\last_run.log"
+echo [BOOT] %DATE% %TIME% Starting run_training_dx12_resume.bat (env=%CONDA_ENV%, task=%TASK%) > "%LOG_FILE%"
+
 rem Force DX12, disable Vulkan entirely
 set "CARB_DISABLE_MODULES=carb.graphics-vulkan.plugin"
 set "OMNI_FORCE_GRAPHICS_API=D3D12"
 set "OMNI_GRAPHICS_API=D3D12"
 set "OMNI_KIT_DISABLE_VULKAN=1"
+rem Disable Kit popups and enable full Python errors
+set "OMNI_KIT_DISABLE_CRASH_REPORTER=1"
+set "OMNI_KIT_DISABLE_HANG_REPORTER=1"
+set "HYDRA_FULL_ERROR=1"
 
 rem PYTHONPATH
 if defined PYTHONPATH (
@@ -37,32 +52,89 @@ if defined PYTHONPATH (
   set "PYTHONPATH=%WORKSPACE%\source"
 )
 
-rem Activate conda if available
-set "CONDA_BAT=%USERPROFILE%\miniconda3\condabin\conda.bat"
-if not exist "%CONDA_BAT%" set "CONDA_BAT=%USERPROFILE%\anaconda3\condabin\conda.bat"
-if not exist "%CONDA_BAT%" set "CONDA_BAT=C:\ProgramData\Miniconda3\condabin\conda.bat"
-if not exist "%CONDA_BAT%" set "CONDA_BAT=C:\ProgramData\Anaconda3\condabin\conda.bat"
-if exist "%CONDA_BAT%" (
+rem ------------------------------------------------------------------
+rem Activate conda (STRICT) with robust discovery of conda.bat
+rem 1) Respect user-provided CONDA_BAT if already set and exists
+rem 2) Try auto-detect via `where conda.bat` or `where conda`
+rem 3) Fall back to common install paths
+rem ------------------------------------------------------------------
+set "_FOUND_CONDA_BAT="
+if defined CONDA_BAT if exist "%CONDA_BAT%" set "_FOUND_CONDA_BAT=%CONDA_BAT%"
+
+if not defined _FOUND_CONDA_BAT (
+  for /f "usebackq delims=" %%C in (`where conda.bat 2^>nul`) do if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%C"
+)
+if not defined _FOUND_CONDA_BAT (
+  for /f "usebackq delims=" %%C in (`where conda 2^>nul`) do (
+    if /i "%%~nxC"=="conda.bat" if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%C"
+    if /i "%%~nxC"=="conda.exe" if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%~dpCconda.bat"
+  )
+)
+if not defined _FOUND_CONDA_BAT if exist "%USERPROFILE%\miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=%USERPROFILE%\miniconda3\condabin\conda.bat"
+if not defined _FOUND_CONDA_BAT if exist "%USERPROFILE%\anaconda3\condabin\conda.bat"   set "_FOUND_CONDA_BAT=%USERPROFILE%\anaconda3\condabin\conda.bat"
+if not defined _FOUND_CONDA_BAT if exist "C:\ProgramData\Miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=C:\ProgramData\Miniconda3\condabin\conda.bat"
+if not defined _FOUND_CONDA_BAT if exist "C:\ProgramData\Anaconda3\condabin\conda.bat"  set "_FOUND_CONDA_BAT=C:\ProgramData\Anaconda3\condabin\conda.bat"
+
+if defined _FOUND_CONDA_BAT (
+  set "CONDA_BAT=%_FOUND_CONDA_BAT%"
+  echo [INFO] Using conda.bat: %CONDA_BAT%
+  echo [INFO] Using conda.bat: %CONDA_BAT%>>"%LOG_FILE%"
   call "%CONDA_BAT%" activate "%CONDA_ENV%"
 ) else (
-  echo [WARN] conda.bat not found. Continuing without activation.
+  echo [ERROR] conda.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.
+  echo [ERROR] conda.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.>>"%LOG_FILE%"
+  popd & exit /b 2
+)
+rem Validate the active Python comes from the requested env (robust)
+set "PY="
+for /f "usebackq delims=" %%P in (`python -c "import sys; print(sys.executable)" 2^>nul`) do set "PY=%%P"
+if not defined PY (
+  echo [ERROR] python not found after conda activation.
+  echo [ERROR] python not found after conda activation.>>"%LOG_FILE%"
+  popd & exit /b 3
+)
+echo [INFO] Using python: %PY%
+echo [INFO] Using python: %PY%>>"%LOG_FILE%"
+echo %PY% | findstr /i "\\envs\\%CONDA_ENV%\\python.exe" >nul
+if errorlevel 1 (
+  echo [ERROR] Active python is not from env "%CONDA_ENV%". Aborting.
+  echo [ERROR] Active python is not from env "%CONDA_ENV%". Aborting.>>"%LOG_FILE%"
+  popd & exit /b 4
 )
 
 rem Validate run path
 if not exist "%RUN_PATH%" (
   echo [ERROR] RunPath not found: %RUN_PATH%
+  echo [ERROR] RunPath not found: %RUN_PATH%>>"%LOG_FILE%"
   popd & exit /b 1
 )
 for %%I in ("%RUN_PATH%") do set "RUN_NAME=%%~nxI"
 
+rem Ensure we don't have stale parallel env_isaaclab python processes (can lock KVDB)
+if "%KILL_OLD_PROCS%"=="1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $procs = Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object { $_.Path -match '\\anaconda3\\envs\\%CONDA_ENV%\\python.exe$' }; if ($procs) { $ids = ($procs | Select-Object -ExpandProperty Id) -join ', '; Write-Output ('[INFO] Killing stale env_isaaclab python PIDs: ' + $ids); $procs | Stop-Process -Force } else { Write-Output '[INFO] No stale env_isaaclab python processes found' }" 1>>"%LOG_FILE%" 2>&1
+)
+
 rem When resuming, keep the original env count. Disable auto sizing to avoid mismatch.
 if "%AUTO_NUM_ENVS%"=="1" (
   echo [INFO] Resume detected for %%RUN_NAME%%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.
+  echo [INFO] Resume detected for %%RUN_NAME%%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.>>"%LOG_FILE%"
   set "AUTO_NUM_ENVS=0"
 )
 
-rem Experience kit for DirectX
-set "EXPERIENCE=%WORKSPACE%\apps\isaacsim_4_5\isaaclab.python.directx.kit"
+rem Experience kit (headless to avoid RTX renderer)
+set "EXPERIENCE=%WORKSPACE%\apps\isaacsim_4_5\isaaclab.python.headless.kit"
+if not exist "%EXPERIENCE%" set "EXPERIENCE=%WORKSPACE%\apps\isaaclab.python.headless.kit"
+if not exist "%EXPERIENCE%" set "EXPERIENCE=%WORKSPACE%\apps\isaacsim_4_5\isaaclab.python.headless.rendering.kit"
+if not exist "%EXPERIENCE%" set "EXPERIENCE=%WORKSPACE%\apps\isaacsim_4_5\isaaclab.python.kit"
+if not exist "%EXPERIENCE%" set "EXPERIENCE=%WORKSPACE%\apps\isaaclab.python.kit"
+if not exist "%EXPERIENCE%" (
+  echo [ERROR] Experience kit not found under %WORKSPACE%\apps or apps\isaacsim_4_5.
+  echo [ERROR] Experience kit not found under %WORKSPACE%\apps or apps\isaacsim_4_5.>>"%LOG_FILE%"
+  popd & exit /b 5
+)
+echo [INFO] Using experience: %EXPERIENCE%
+echo [INFO] Using experience: %EXPERIENCE%>>"%LOG_FILE%"
 
 rem Optional: auto-compute NUM_ENVS to match target VRAM using a short probe
 if "%AUTO_NUM_ENVS%"=="1" (
@@ -80,15 +152,49 @@ if "%AUTO_NUM_ENVS%"=="1" (
   )
 )
 
-rem Build args
+rem -----------------------------
+rem Build args and launch (with optional retry on error)
+rem -----------------------------
+set "RETRY_ALLOWED=%ALLOW_CHANGE_NUM_ENVS_ON_ERROR%"
+rem Disable retries that change NUM_ENVS for resume runs (to keep shapes consistent)
+if exist "%RUN_PATH%" set "RETRY_ALLOWED=0"
+set "ATTEMPT=1"
+
+:LAUNCH_ATTEMPT
 set "ARGS=-p scripts\reinforcement_learning\rsl_rl\train.py --task %TASK% --num_envs %NUM_ENVS% --max_iterations %MAX_ITERS% --headless --seed %SEED% --experience ^"%EXPERIENCE%^" --resume --load_run %RUN_NAME% --log_dir_override ^"%RUN_PATH%^""
 if "%VIDEO%"=="1" set "ARGS=%ARGS% --video --video_interval %VIDEO_INTERVAL% --video_length %VIDEO_LENGTH%"
 
-echo [INFO] FINAL NUM_ENVS=%NUM_ENVS%
+echo [INFO] ATTEMPT %ATTEMPT% with NUM_ENVS=%NUM_ENVS%
+echo [INFO] ATTEMPT %ATTEMPT% with NUM_ENVS=%NUM_ENVS%>>"%LOG_FILE%"
+echo [INFO] Logging to "%LOG_FILE%"
+echo [INFO] Logging to "%LOG_FILE%" >>"%LOG_FILE%"
 echo Launching training...
+echo Launching training...>>"%LOG_FILE%"
 echo isaaclab.bat %ARGS%
-call "%WORKSPACE%\isaaclab.bat" %ARGS%
+echo isaaclab.bat %ARGS%>>"%LOG_FILE%"
+
+rem Redirect all output to log so Python tracebacks are saved even if window closes
+call "%WORKSPACE%\isaaclab.bat" %ARGS% 1>>"%LOG_FILE%" 2>&1
 set "CODE=%ERRORLEVEL%"
 
+if "%CODE%"=="0" (
+  echo [OK] Completed. See log: "%LOG_FILE%"
+  goto :EPILOG
+)
+
+if "%RETRY_ALLOWED%"=="1" (
+  rem Lower NUM_ENVS and retry until MIN_NUM_ENVS
+  if %NUM_ENVS% GTR %MIN_NUM_ENVS% (
+    set /a NUM_ENVS=%NUM_ENVS%-%DECR_STEP%
+    if %NUM_ENVS% LSS %MIN_NUM_ENVS% set "NUM_ENVS=%MIN_NUM_ENVS%"
+    echo [WARN] Exit code %CODE%. Lowering NUM_ENVS to %NUM_ENVS% and retrying...>>"%LOG_FILE%"
+    set /a ATTEMPT=%ATTEMPT%+1
+    goto :LAUNCH_ATTEMPT
+  )
+)
+
+echo [ERROR] Exit code %CODE%. See log: "%LOG_FILE%"
+
+:EPILOG
 popd
 exit /b %CODE%
