@@ -4,7 +4,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem ===== User config =====
 set "CONDA_ENV=env_isaaclab"
 set "TASK=Isaac-Velocity-Flat-G1-v0"
-set "NUM_ENVS=896"
+set "NUM_ENVS=3136"
 set "MAX_ITERS=20000"
 set "SEED=42"
 set "RUN_PATH=C:\Users\zudva\Downloads\IsaacLab\logs\rsl_rl\g1_flat\2025-08-14_15-28-32"
@@ -12,7 +12,7 @@ set "VIDEO=0"
 set "VIDEO_INTERVAL=5000"
 set "VIDEO_LENGTH=300"
 rem Auto-size NumEnvs to saturate VRAM (1=on, 0=off)
-set "AUTO_NUM_ENVS=1"
+set "AUTO_NUM_ENVS=0"
 set "TARGET_VRAM_GB=14"
 set "PROBE_NUM_ENVS=512"
 set "PROBE_WAIT_SEC=45"
@@ -22,6 +22,8 @@ set "KILL_OLD_PROCS=1"
 set "ALLOW_CHANGE_NUM_ENVS_ON_ERROR=0"
 set "MIN_NUM_ENVS=768"
 set "DECR_STEP=64"
+rem Control whether to RESUME an old run (1) or start a NEW run (0)
+set "USE_RESUME=0"
 rem ========================
 
 rem Resolve workspace (folder of this script)
@@ -58,37 +60,51 @@ rem 1) Respect user-provided CONDA_BAT if already set and exists
 rem 2) Try auto-detect via `where conda.bat` or `where conda`
 rem 3) Fall back to common install paths
 rem ------------------------------------------------------------------
+rem 0) Pre-seed a known conda.bat path for this machine if available
+if not defined CONDA_BAT if exist "C:\Users\zudva\anaconda3\condabin\conda.bat" set "CONDA_BAT=C:\Users\zudva\anaconda3\condabin\conda.bat"
 set "_FOUND_CONDA_BAT="
-if defined CONDA_BAT if exist "%CONDA_BAT%" set "_FOUND_CONDA_BAT=%CONDA_BAT%"
+if not "%CONDA_BAT%"=="" if exist "%CONDA_BAT%" set "_FOUND_CONDA_BAT=%CONDA_BAT%"
 
-if not defined _FOUND_CONDA_BAT (
-  for /f "usebackq delims=" %%C in (`where conda.bat 2^>nul`) do if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%C"
+if "%_FOUND_CONDA_BAT%"=="" (
+  for /f "usebackq delims=" %%C in (`where conda.bat 2^>nul`) do if "%_FOUND_CONDA_BAT%"=="" set "_FOUND_CONDA_BAT=%%C"
 )
-if not defined _FOUND_CONDA_BAT (
+if "%_FOUND_CONDA_BAT%"=="" (
   for /f "usebackq delims=" %%C in (`where conda 2^>nul`) do (
-    if /i "%%~nxC"=="conda.bat" if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%C"
-    if /i "%%~nxC"=="conda.exe" if not defined _FOUND_CONDA_BAT set "_FOUND_CONDA_BAT=%%~dpCconda.bat"
+    if /i "%%~nxC"=="conda.bat" if "%_FOUND_CONDA_BAT%"=="" set "_FOUND_CONDA_BAT=%%C"
+    if /i "%%~nxC"=="conda.exe" if "%_FOUND_CONDA_BAT%"=="" set "_FOUND_CONDA_BAT=%%~dpCconda.bat"
   )
 )
-if not defined _FOUND_CONDA_BAT if exist "%USERPROFILE%\miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=%USERPROFILE%\miniconda3\condabin\conda.bat"
-if not defined _FOUND_CONDA_BAT if exist "%USERPROFILE%\anaconda3\condabin\conda.bat"   set "_FOUND_CONDA_BAT=%USERPROFILE%\anaconda3\condabin\conda.bat"
-if not defined _FOUND_CONDA_BAT if exist "C:\ProgramData\Miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=C:\ProgramData\Miniconda3\condabin\conda.bat"
-if not defined _FOUND_CONDA_BAT if exist "C:\ProgramData\Anaconda3\condabin\conda.bat"  set "_FOUND_CONDA_BAT=C:\ProgramData\Anaconda3\condabin\conda.bat"
+if "%_FOUND_CONDA_BAT%"=="" if exist "%USERPROFILE%\miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=%USERPROFILE%\miniconda3\condabin\conda.bat"
+if "%_FOUND_CONDA_BAT%"=="" if exist "%USERPROFILE%\anaconda3\condabin\conda.bat"   set "_FOUND_CONDA_BAT=%USERPROFILE%\anaconda3\condabin\conda.bat"
+if "%_FOUND_CONDA_BAT%"=="" if exist "C:\ProgramData\Miniconda3\condabin\conda.bat" set "_FOUND_CONDA_BAT=C:\ProgramData\Miniconda3\condabin\conda.bat"
+if "%_FOUND_CONDA_BAT%"=="" if exist "C:\ProgramData\Anaconda3\condabin\conda.bat"  set "_FOUND_CONDA_BAT=C:\ProgramData\Anaconda3\condabin\conda.bat"
 
-if defined _FOUND_CONDA_BAT (
+if not "%_FOUND_CONDA_BAT%"=="" (
   set "CONDA_BAT=%_FOUND_CONDA_BAT%"
   echo [INFO] Using conda.bat: %CONDA_BAT%
   echo [INFO] Using conda.bat: %CONDA_BAT%>>"%LOG_FILE%"
   call "%CONDA_BAT%" activate "%CONDA_ENV%"
 ) else (
-  echo [ERROR] conda.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.
-  echo [ERROR] conda.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.>>"%LOG_FILE%"
-  popd & exit /b 2
+  rem Try activate.bat fallback
+  set "_FOUND_ACTIVATE_BAT="
+  if "%_FOUND_ACTIVATE_BAT%"=="" if exist "%USERPROFILE%\anaconda3\Scripts\activate.bat" set "_FOUND_ACTIVATE_BAT=%USERPROFILE%\anaconda3\Scripts\activate.bat"
+  if "%_FOUND_ACTIVATE_BAT%"=="" if exist "%USERPROFILE%\miniconda3\Scripts\activate.bat" set "_FOUND_ACTIVATE_BAT=%USERPROFILE%\miniconda3\Scripts\activate.bat"
+  if "%_FOUND_ACTIVATE_BAT%"=="" if exist "C:\ProgramData\Anaconda3\Scripts\activate.bat" set "_FOUND_ACTIVATE_BAT=C:\ProgramData\Anaconda3\Scripts\activate.bat"
+  if "%_FOUND_ACTIVATE_BAT%"=="" if exist "C:\ProgramData\Miniconda3\Scripts\activate.bat" set "_FOUND_ACTIVATE_BAT=C:\ProgramData\Miniconda3\Scripts\activate.bat"
+  if not "%_FOUND_ACTIVATE_BAT%"=="" (
+    echo [INFO] Using activate.bat: %_FOUND_ACTIVATE_BAT%
+    echo [INFO] Using activate.bat: %_FOUND_ACTIVATE_BAT%>>"%LOG_FILE%"
+    call "%_FOUND_ACTIVATE_BAT%" "%CONDA_ENV%"
+  ) else (
+    echo [ERROR] conda.bat/activate.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.
+    echo [ERROR] conda.bat/activate.bat not found. Set CONDA_BAT to the full path, or run from an Anaconda/Miniconda Prompt.>>"%LOG_FILE%"
+    popd & exit /b 2
+  )
 )
 rem Validate the active Python comes from the requested env (robust)
 set "PY="
 for /f "usebackq delims=" %%P in (`python -c "import sys; print(sys.executable)" 2^>nul`) do set "PY=%%P"
-if not defined PY (
+if "%PY%"=="" (
   echo [ERROR] python not found after conda activation.
   echo [ERROR] python not found after conda activation.>>"%LOG_FILE%"
   popd & exit /b 3
@@ -102,13 +118,17 @@ if errorlevel 1 (
   popd & exit /b 4
 )
 
-rem Validate run path
-if not exist "%RUN_PATH%" (
-  echo [ERROR] RunPath not found: %RUN_PATH%
-  echo [ERROR] RunPath not found: %RUN_PATH%>>"%LOG_FILE%"
-  popd & exit /b 1
+rem Validate run path only if resuming
+if "%USE_RESUME%"=="1" (
+  if not exist "%RUN_PATH%" (
+    echo [ERROR] RunPath not found: %RUN_PATH%
+    echo [ERROR] RunPath not found: %RUN_PATH%>>"%LOG_FILE%"
+    popd & exit /b 1
+  )
+  for %%I in ("%RUN_PATH%") do set "RUN_NAME=%%~nxI"
+) else (
+  set "RUN_NAME="
 )
-for %%I in ("%RUN_PATH%") do set "RUN_NAME=%%~nxI"
 
 rem Ensure we don't have stale parallel env_isaaclab python processes (can lock KVDB)
 if "%KILL_OLD_PROCS%"=="1" (
@@ -116,9 +136,9 @@ if "%KILL_OLD_PROCS%"=="1" (
 )
 
 rem When resuming, keep the original env count. Disable auto sizing to avoid mismatch.
-if "%AUTO_NUM_ENVS%"=="1" (
-  echo [INFO] Resume detected for %%RUN_NAME%%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.
-  echo [INFO] Resume detected for %%RUN_NAME%%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.>>"%LOG_FILE%"
+if "%USE_RESUME%"=="1" if "%AUTO_NUM_ENVS%"=="1" (
+  echo [INFO] Resume detected for %RUN_NAME%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.
+  echo [INFO] Resume detected for %RUN_NAME%. Disabling AUTO_NUM_ENVS to keep env count compatible with existing run.>>"%LOG_FILE%"
   set "AUTO_NUM_ENVS=0"
 )
 
@@ -157,11 +177,12 @@ rem Build args and launch (with optional retry on error)
 rem -----------------------------
 set "RETRY_ALLOWED=%ALLOW_CHANGE_NUM_ENVS_ON_ERROR%"
 rem Disable retries that change NUM_ENVS for resume runs (to keep shapes consistent)
-if exist "%RUN_PATH%" set "RETRY_ALLOWED=0"
+if "%USE_RESUME%"=="1" if exist "%RUN_PATH%" set "RETRY_ALLOWED=0"
 set "ATTEMPT=1"
 
 :LAUNCH_ATTEMPT
-set "ARGS=-p scripts\reinforcement_learning\rsl_rl\train.py --task %TASK% --num_envs %NUM_ENVS% --max_iterations %MAX_ITERS% --headless --seed %SEED% --experience ^"%EXPERIENCE%^" --resume --load_run %RUN_NAME% --log_dir_override ^"%RUN_PATH%^""
+set "ARGS=-p scripts\reinforcement_learning\rsl_rl\train.py --task %TASK% --num_envs %NUM_ENVS% --max_iterations %MAX_ITERS% --headless --seed %SEED% --experience ^"%EXPERIENCE%^""
+if "%USE_RESUME%"=="1" set "ARGS=%ARGS% --resume --load_run %RUN_NAME% --log_dir_override ^"%RUN_PATH%^""
 if "%VIDEO%"=="1" set "ARGS=%ARGS% --video --video_interval %VIDEO_INTERVAL% --video_length %VIDEO_LENGTH%"
 
 echo [INFO] ATTEMPT %ATTEMPT% with NUM_ENVS=%NUM_ENVS%
