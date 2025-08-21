@@ -54,6 +54,19 @@ for %%N in (%EXTREME_COUNTS%) do (
     timeout /t 3 >nul
 )
 
+REM If we reach here, all tests passed - use maximum count
+if defined EXTREME_MAX (
+    echo ===============================================
+    echo ALL TESTS PASSED! Maximum: !EXTREME_MAX! environments
+    echo This is EXCEPTIONAL performance! 🚀
+    echo ===============================================
+    goto :EXTREME_TRAINING
+) else (
+    echo No successful tests - using fallback
+    set "EXTREME_MAX=1024"
+    goto :EXTREME_TRAINING
+)
+
 :EXTREME_TRAINING
 echo.
 echo ============================================
